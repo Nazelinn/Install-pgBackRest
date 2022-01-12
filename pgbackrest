@@ -1,0 +1,88 @@
+PGBACKREST
+1:Yedek sunucusuna postgresql backup alınacak db'lerin versiyonunda postgresql kurulumu yapılır.
+yum install  https://download.postgresql.org/pub/repos/yum/11/redhat/rhel-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm -y
+yum install postgresql11 -y
+yum  install postgresql11-server -y
+yum install postgresql11-contrib -y
+yum install postgresql11-plpython -y 
+/usr/pgsql-11/bin/postgresql-11-setup initdb
+systemctl enable postgresql-11.service
+systemctl start postgresql-11.service
+​
+2: PostgreSQL ve yedek sunucuya pgbackrest yazılımı yüklenir.
+yum install pgbackrest -y
+​
+3:primary ve yedek sunucusunda pgbackrest config de aşağıdaki işlemler yapılır.
+​
+chmod postgres:postgres /var/lib/pgbackrest/
+chmod postgres:postgres /etc/pgbackrest.conf
+chmod 700 /var/lib/pgbackrest/ /etc/pgbackrest.conf
+##sunucular birbirine ssh keygen ile passwords bağlanması gerekiyor.
+su - postgres
+ssh-keygen -t rsa
+cd /var/lib/pgsql/.ssh/
+vi authorized_keys  (/var/lib/pgsql/.ssh/ altında olan sunucunun id_rsa.pub bilgisi eklenir her iki sunucu için de )
+chmod 700 authorized_keys
+​
+primary postgresql sunucuda bu konfigler yapılır
+-bash-4.2$ cat pgbackrest.conf
+[global]
+repo1-host=192.168.53.226  > yedek sunucu ipsi
+repo1-host-user=postgres
+log-level-console=info
+log-level-file=detail
+compress=n
+​
+[global:archive-push]
+process-max=4
+archive-async=y
+log-level-console=info
+log-level-stderr=info
+​
+[db-primary] --stanza ismim 
+pg1-path=/var/lib/pgsql/11/data
+pg1-port=5432         
+​
+postgresql.conf da bu ayarlar yapılması gerekiyor;
+listen_addresses = '*'   
+wal_level = hot_standby
+archive_mode = on
+archive_command = 'pgbackrest --stanza=db-primary archive-push  %p' 
+​
+Yedek sunucusunda yapılması gerekenler;
+-bash-4.2$ cat /etc/pgbackrest.conf
+[global]
+repo1-path=/var/lib/pgbackrest
+repo1-host-user=postgres
+process-max=4
+log-level-console=info
+log-level-file=detail
+​
+[db-primary]
+pg1-host=192.168.53.224 > backup alınacak sunucu ipsi
+pg1-host-user=postgres
+pg1-path=/var/lib/pgsql/11/data  > data db path
+pg1-port=5432
+compress=n
+repo1-retention-full=2
+start-fast=y
+stop-auto=y      
+​
+bu işlemlerden sonra yedek sunucuda bu yapılır
+su - postrges
+pgbackrest --stanza=db-primary stanza-create 
+​
+​
+sonrasında backup'lar alınır
+pgbackrest --stanza=db-primary --type=full backup  
+pgbackrest --stanza=db-primary --type=incr backup 
+pgbackrest --stanza=db-primary --type=diff backup 
+​
+backupların kontrolü
+pgbackrest --stanza=db-primary info
+​
+​
+crontab -e
+0 02 * * * pgbackrest --stanza=db-primary --type=full backup 
+​
+​
